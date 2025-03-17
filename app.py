@@ -3,12 +3,14 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import os
+import glob
 from collections import defaultdict
+from pathlib import Path
 
 st.set_page_config(page_title="CSV Column Sum Calculator", layout="wide")
 
-st.title("💼 Calcolatore Somma Colonne CSV (File Locali)")
-st.write("Specifica il percorso di un file CSV, seleziona le colonne da sommare e opzionalmente raggruppa per una colonna")
+st.title("💼 Calcolatore Somma Colonne CSV (Versione Robusta)")
+st.write("Seleziona e analizza un file CSV locale")
 
 # Inizializza le variabili di stato
 if 'file_analyzed' not in st.session_state:
@@ -26,26 +28,57 @@ if 'selected_columns' not in st.session_state:
 if 'group_by_column' not in st.session_state:
     st.session_state.group_by_column = None
 
+# Funzione per normalizzare il percorso del file
+def normalize_path(path):
+    """Normalizza il percorso del file per evitare problemi con backslash e spazi"""
+    # Converti in oggetto Path e poi in stringa per normalizzare
+    return str(Path(path))
+
 # Funzione per analizzare il file
 def analyze_file(file_path):
     try:
-        sample = pd.read_csv(
-            file_path, 
-            nrows=10,
-            delimiter=st.session_state.delimiter,
-            thousands=st.session_state.thousands_sep if st.session_state.thousands_sep else None,
-            decimal=st.session_state.decimal_sep,
-            encoding=st.session_state.encoding
-        )
+        # Normalizza il percorso
+        file_path = normalize_path(file_path)
         
-        st.session_state.headers = sample.columns.tolist()
-        st.session_state.numeric_columns = [col for col in st.session_state.headers 
-                                          if pd.api.types.is_numeric_dtype(sample[col])]
-        st.session_state.categorical_columns = [col for col in st.session_state.headers 
-                                             if col not in st.session_state.numeric_columns]
-        st.session_state.sample_data = sample
-        st.session_state.file_analyzed = True
-        return True
+        # Verifica se il file esiste
+        if not os.path.exists(file_path):
+            st.error(f"Il file non esiste: {file_path}")
+            return False
+            
+        # Verifica i permessi di lettura
+        if not os.access(file_path, os.R_OK):
+            st.error(f"Non hai i permessi per leggere il file: {file_path}")
+            return False
+        
+        # Mostra informazioni sul file
+        file_size = os.path.getsize(file_path) / (1024 * 1024)  # in MB
+        st.info(f"File trovato: {os.path.basename(file_path)} ({file_size:.2f} MB)")
+        
+        # Prova a leggere le prime righe del file
+        try:
+            sample = pd.read_csv(
+                file_path, 
+                nrows=10,
+                delimiter=st.session_state.delimiter,
+                thousands=st.session_state.thousands_sep if st.session_state.thousands_sep else None,
+                decimal=st.session_state.decimal_sep,
+                encoding=st.session_state.encoding
+            )
+            
+            st.session_state.headers = sample.columns.tolist()
+            st.session_state.numeric_columns = [col for col in st.session_state.headers 
+                                              if pd.api.types.is_numeric_dtype(sample[col])]
+            st.session_state.categorical_columns = [col for col in st.session_state.headers 
+                                                 if col not in st.session_state.numeric_columns]
+            st.session_state.sample_data = sample
+            st.session_state.file_analyzed = True
+            return True
+        except pd.errors.EmptyDataError:
+            st.error("Il file sembra essere vuoto.")
+            return False
+        except pd.errors.ParserError:
+            st.error("Errore durante il parsing del file. Verifica il formato e il delimitatore.")
+            return False
     except Exception as e:
         st.error(f"Si è verificato un errore durante l'analisi del file: {str(e)}")
         st.info("Suggerimento: prova a cambiare l'encoding o il delimitatore nelle opzioni di caricamento.")
@@ -59,6 +92,9 @@ def calculate_sums(file_path):
         return False
     
     try:
+        # Normalizza il percorso
+        file_path = normalize_path(file_path)
+        
         # Calcoliamo i totali utilizzando chunks per file di grandi dimensioni
         chunk_size = 100000
         
@@ -178,162 +214,215 @@ st.session_state.encoding = st.selectbox("Encoding del file",
                                        options=["utf-8", "latin1", "ISO-8859-1", "cp1252"], 
                                        index=0)
 
-# Input del percorso del file
-st.subheader("2️⃣ Specifica il percorso del file CSV")
-file_path = st.text_input("Percorso completo del file CSV:", 
-                        help="Ad esempio: C:/Dati/miofile.csv oppure /home/user/dati/miofile.csv")
+# Metodi alternativi per specificare il file
+st.subheader("2️⃣ Scegli il file CSV")
 
-# Controlla se il file esiste
-if file_path:
-    if not os.path.exists(file_path):
-        st.error(f"Il file {file_path} non esiste. Verifica il percorso e riprova.")
-    elif not file_path.lower().endswith('.csv'):
-        st.warning(f"Il file {file_path} non sembra essere un file CSV. Assicurati che sia nel formato corretto.")
-    else:
-        # File esiste e sembra un CSV
-        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-        st.info(f"File trovato: {os.path.basename(file_path)} ({file_size_mb:.2f} MB)")
-        
-        # Pulsante per analizzare il file con le impostazioni specificate
-        if not st.session_state.file_analyzed:
-            if st.button("🔍 Analizza file"):
-                analyze_file(file_path)
+# Crea due colonne
+col1, col2 = st.columns(2)
+
+# Nella prima colonna, input manuale del percorso
+with col1:
+    st.markdown("**Opzione 1: Inserisci il percorso manualmente**")
+    file_path_input = st.text_input(
+        "Percorso completo del file CSV:",
+        help="Ad esempio: C:/Dati/miofile.csv oppure /home/user/dati/miofile.csv"
+    )
     
-        # Se il file è stato analizzato con successo, mostriamo i risultati dell'analisi
-        if st.session_state.file_analyzed:
-            st.success(f"✅ File analizzato con successo! Rilevate {len(st.session_state.headers)} colonne, di cui {len(st.session_state.numeric_columns)} numeriche.")
+    if file_path_input:
+        # Normalizza il percorso
+        file_path_input = normalize_path(file_path_input)
+        st.session_state.file_path = file_path_input
+
+# Nella seconda colonna, ricerca file con pattern
+with col2:
+    st.markdown("**Opzione 2: Cerca file nella directory**")
+    search_dir = st.text_input(
+        "Directory da cercare:", 
+        help="Ad esempio: C:/Dati oppure /home/user/dati"
+    )
+    
+    if search_dir:
+        # Trova tutti i file CSV nella directory
+        try:
+            # Normalizza il percorso
+            search_dir = normalize_path(search_dir)
             
-            # Mostriamo un'anteprima dei dati
-            st.subheader("Anteprima dei dati")
-            st.dataframe(st.session_state.sample_data)
-            
-            # Passo 3: Selezione delle colonne e raggruppamento
-            st.subheader("3️⃣ Configura l'analisi")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Selezione colonne da sommare
-                st.session_state.selected_columns = st.multiselect(
-                    "Seleziona le colonne da sommare:",
-                    options=st.session_state.headers,
-                    default=st.session_state.numeric_columns[:min(5, len(st.session_state.numeric_columns))]
-                )
-            
-            with col2:
-                # Selezione colonna per raggruppamento
-                group_options = ["Nessun raggruppamento"] + st.session_state.categorical_columns
-                st.session_state.group_by_column = st.selectbox(
-                    "Raggruppa per colonna (opzionale):",
-                    options=group_options,
-                    index=0,
-                    help="Seleziona una colonna per raggruppare i risultati"
-                )
+            if os.path.exists(search_dir) and os.path.isdir(search_dir):
+                # Cerca file CSV nella directory
+                csv_files = glob.glob(os.path.join(search_dir, "*.csv"))
                 
-                # Convertiamo "Nessun raggruppamento" a None
-                if st.session_state.group_by_column == "Nessun raggruppamento":
-                    st.session_state.group_by_column = None
-            
-            if st.session_state.selected_columns:
-                # Verifichiamo quali delle colonne selezionate sono numeriche
-                non_numeric_selected = [col for col in st.session_state.selected_columns 
-                                      if col not in st.session_state.numeric_columns]
-                if non_numeric_selected:
-                    st.warning(f"⚠️ Attenzione: le seguenti colonne non sembrano essere numeriche: {', '.join(non_numeric_selected)}. L'app tenterà di convertirle.")
-                
-                # Bottone per avviare il calcolo
-                if st.button("🧮 Calcola somme"):
-                    with st.spinner("Elaborazione in corso... Potrebbe richiedere tempo per file grandi."):
-                        st.session_state.calculation_requested = True
-                        calculate_sums(file_path)
-            
-            # Mostro i risultati se il calcolo è stato richiesto e completato
-            if st.session_state.get('calculation_requested', False) and st.session_state.get('calculation_done', False):
-                # Visualizziamo i risultati
-                st.subheader("Risultati")
-                
-                # Verifico se ci sono risultati raggruppati
-                has_groups = st.session_state.get('grouped_results', False)
-                
-                # Mostriamo la tabella dei risultati
-                if has_groups:
-                    # Configurazione colonne per risultati raggruppati
-                    st.dataframe(
-                        st.session_state.results_df,
-                        column_config={
-                            "Gruppo": st.column_config.TextColumn("Gruppo", help="Valore di raggruppamento"),
-                            "Colonna": st.column_config.TextColumn("Colonna", help="Colonna sommata"),
-                            "Somma": st.column_config.NumberColumn("Somma", format="%.2f"),
-                            "Valori validi": st.column_config.NumberColumn("Valori validi", format="%d")
-                        },
-                        hide_index=True
+                if csv_files:
+                    # Seleziona un file dall'elenco
+                    selected_file = st.selectbox(
+                        "Seleziona un file CSV:", 
+                        options=csv_files,
+                        format_func=lambda x: os.path.basename(x)
                     )
                     
-                    # Creiamo un grafico a barre raggruppate
-                    try:
-                        pivot_df = st.session_state.results_df.pivot(index='Gruppo', columns='Colonna', values='Somma')
-                        
-                        # Reset index per avere la colonna "Gruppo" come colonna normale
-                        plot_df = pivot_df.reset_index()
-                        
-                        # Riformattiamo per Plotly
-                        melted_df = pd.melt(plot_df, id_vars=['Gruppo'], var_name='Colonna', value_name='Somma')
-                        
-                        fig = px.bar(
-                            melted_df, 
-                            x='Gruppo', 
-                            y='Somma', 
-                            color='Colonna',
-                            title="Somma per gruppo e colonna",
-                            labels={"Somma": "Valore Totale", "Gruppo": "Valore Gruppo"}
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Errore nella creazione del grafico: {str(e)}")
-                    
+                    if selected_file:
+                        # Imposta il percorso del file selezionato
+                        st.session_state.file_path = selected_file
                 else:
-                    # Configurazione colonne per risultati non raggruppati
-                    st.dataframe(
-                        st.session_state.results_df,
-                        column_config={
-                            "Colonna": st.column_config.TextColumn("Colonna", help="Colonna sommata"),
-                            "Somma": st.column_config.NumberColumn("Somma", format="%.2f"),
-                            "Valori validi": st.column_config.NumberColumn("Valori validi", format="%d")
-                        },
-                        hide_index=True
-                    )
+                    st.info(f"Nessun file CSV trovato in {search_dir}")
+            else:
+                st.error(f"La directory {search_dir} non esiste o non è accessibile.")
+        except Exception as e:
+            st.error(f"Errore durante la ricerca dei file: {str(e)}")
+
+# Verifica se abbiamo un percorso file valido
+if 'file_path' in st.session_state and st.session_state.file_path:
+    file_path = st.session_state.file_path
+    
+    # Mostra il percorso selezionato
+    st.success(f"File selezionato: {file_path}")
+    
+    # Pulsante per analizzare il file con le impostazioni specificate
+    if not st.session_state.file_analyzed:
+        if st.button("🔍 Analizza file"):
+            try:
+                analyze_file(file_path)
+            except Exception as e:
+                st.error(f"Errore durante l'analisi del file: {str(e)}")
+                st.info("DEBUG: Verifica il percorso del file e i permessi di accesso.")
+    
+    # Se il file è stato analizzato con successo, mostriamo i risultati dell'analisi
+    if st.session_state.file_analyzed:
+        st.success(f"✅ File analizzato con successo! Rilevate {len(st.session_state.headers)} colonne, di cui {len(st.session_state.numeric_columns)} numeriche.")
+        
+        # Mostriamo un'anteprima dei dati
+        st.subheader("Anteprima dei dati")
+        st.dataframe(st.session_state.sample_data)
+        
+        # Passo 3: Selezione delle colonne e raggruppamento
+        st.subheader("3️⃣ Configura l'analisi")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Selezione colonne da sommare
+            st.session_state.selected_columns = st.multiselect(
+                "Seleziona le colonne da sommare:",
+                options=st.session_state.headers,
+                default=st.session_state.numeric_columns[:min(5, len(st.session_state.numeric_columns))]
+            )
+        
+        with col2:
+            # Selezione colonna per raggruppamento
+            group_options = ["Nessun raggruppamento"] + st.session_state.categorical_columns
+            st.session_state.group_by_column = st.selectbox(
+                "Raggruppa per colonna (opzionale):",
+                options=group_options,
+                index=0,
+                help="Seleziona una colonna per raggruppare i risultati"
+            )
+            
+            # Convertiamo "Nessun raggruppamento" a None
+            if st.session_state.group_by_column == "Nessun raggruppamento":
+                st.session_state.group_by_column = None
+        
+        if st.session_state.selected_columns:
+            # Verifichiamo quali delle colonne selezionate sono numeriche
+            non_numeric_selected = [col for col in st.session_state.selected_columns 
+                                  if col not in st.session_state.numeric_columns]
+            if non_numeric_selected:
+                st.warning(f"⚠️ Attenzione: le seguenti colonne non sembrano essere numeriche: {', '.join(non_numeric_selected)}. L'app tenterà di convertirle.")
+            
+            # Bottone per avviare il calcolo
+            if st.button("🧮 Calcola somme"):
+                with st.spinner("Elaborazione in corso... Potrebbe richiedere tempo per file grandi."):
+                    st.session_state.calculation_requested = True
+                    try:
+                        calculate_sums(file_path)
+                    except Exception as e:
+                        st.error(f"Errore durante il calcolo delle somme: {str(e)}")
+        
+        # Mostro i risultati se il calcolo è stato richiesto e completato
+        if st.session_state.get('calculation_requested', False) and st.session_state.get('calculation_done', False):
+            # Visualizziamo i risultati
+            st.subheader("Risultati")
+            
+            # Verifico se ci sono risultati raggruppati
+            has_groups = st.session_state.get('grouped_results', False)
+            
+            # Mostriamo la tabella dei risultati
+            if has_groups:
+                # Configurazione colonne per risultati raggruppati
+                st.dataframe(
+                    st.session_state.results_df,
+                    column_config={
+                        "Gruppo": st.column_config.TextColumn("Gruppo", help="Valore di raggruppamento"),
+                        "Colonna": st.column_config.TextColumn("Colonna", help="Colonna sommata"),
+                        "Somma": st.column_config.NumberColumn("Somma", format="%.2f"),
+                        "Valori validi": st.column_config.NumberColumn("Valori validi", format="%d")
+                    },
+                    hide_index=True
+                )
+                
+                # Creiamo un grafico a barre raggruppate
+                try:
+                    pivot_df = st.session_state.results_df.pivot(index='Gruppo', columns='Colonna', values='Somma')
                     
-                    # Creiamo un grafico a barre semplice
+                    # Reset index per avere la colonna "Gruppo" come colonna normale
+                    plot_df = pivot_df.reset_index()
+                    
+                    # Riformattiamo per Plotly
+                    melted_df = pd.melt(plot_df, id_vars=['Gruppo'], var_name='Colonna', value_name='Somma')
+                    
                     fig = px.bar(
-                        st.session_state.results_df, 
-                        x="Colonna", 
-                        y="Somma",
-                        title="Somma per colonna",
-                        labels={"Somma": "Valore totale", "Colonna": "Nome colonna"}
+                        melted_df, 
+                        x='Gruppo', 
+                        y='Somma', 
+                        color='Colonna',
+                        title="Somma per gruppo e colonna",
+                        labels={"Somma": "Valore Totale", "Gruppo": "Valore Gruppo"}
                     )
                     st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Errore nella creazione del grafico: {str(e)}")
                 
-                # Offriamo il download dei risultati
-                csv = st.session_state.results_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Scarica risultati come CSV",
-                    data=csv,
-                    file_name="risultati_somme.csv",
-                    mime="text/csv"
+            else:
+                # Configurazione colonne per risultati non raggruppati
+                st.dataframe(
+                    st.session_state.results_df,
+                    column_config={
+                        "Colonna": st.column_config.TextColumn("Colonna", help="Colonna sommata"),
+                        "Somma": st.column_config.NumberColumn("Somma", format="%.2f"),
+                        "Valori validi": st.column_config.NumberColumn("Valori validi", format="%d")
+                    },
+                    hide_index=True
                 )
+                
+                # Creiamo un grafico a barre semplice
+                fig = px.bar(
+                    st.session_state.results_df, 
+                    x="Colonna", 
+                    y="Somma",
+                    title="Somma per colonna",
+                    labels={"Somma": "Valore totale", "Colonna": "Nome colonna"}
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Offriamo il download dei risultati
+            csv = st.session_state.results_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Scarica risultati come CSV",
+                data=csv,
+                file_name="risultati_somme.csv",
+                mime="text/csv"
+            )
 else:
     # Messaggio informativo quando nessun file è specificato
-    st.info("👆 Specifica il percorso di un file CSV per iniziare.")
+    st.info("👆 Specifica un percorso o cerca un file CSV per iniziare.")
     
-    # Esempi di percorsi
-    st.subheader("Esempi di percorsi file:")
+    st.subheader("Suggerimenti per l'uso:")
     
-    if os.name == 'nt':  # Windows
-        st.code("C:/Users/nomeutente/Documenti/dati.csv")
-        st.code("D:/Progetti/Analisi/dataset_grande.csv")
-    else:  # Linux/Mac
-        st.code("/home/utente/documenti/dati.csv")
-        st.code("/opt/dati/dataset_grande.csv")
+    st.markdown("""
+    **Per problemi con i percorsi:**
+    - Usa forward slash (/) invece di backslash anche su Windows: `C:/Users/nome/file.csv`
+    - Verifica che non ci siano spazi o caratteri speciali nel percorso
+    - Verifica che il file abbia estensione `.csv`
+    - Assicurati di avere i permessi di lettura per il file
+    """)
     
     # Esempio di formattazione del file
     st.subheader("Il tuo file CSV dovrebbe avere un formato simile:")
