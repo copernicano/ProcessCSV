@@ -1,0 +1,2 @@
+[server]
+maxUploadSize = 1000  # in MB, aumenta questo valore in base alle tue esigenze
